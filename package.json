@@ -1,0 +1,42 @@
+{
+  "name": "llms",
+  "version": "0.1.0",
+  "description": "Unified LLM abstraction layer. Provider-agnostic interface for chat, streaming, thinking, and tool use.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test":"node test.js"
+  },
+  "keywords": [
+    "llm",
+    "anthropic",
+    "openai",
+    "minimax",
+    "ai",
+    "agent",
+    "tool-use"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
