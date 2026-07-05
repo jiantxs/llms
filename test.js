@@ -9,7 +9,14 @@
  *   /tools   列出工具
  *   /info    显示会话信息
  *   /stream  切换流式开关
+ *   /abort   打断当前正在进行的 send（等价于 send 中按 q / Ctrl-C）
  *   /help    帮助
+ *
+ * 打断模型输出（两种快捷键，二选一即可）：
+ *   1) send 中按 q         —— 旁挂 stdin 'data' 监听，不依赖终端 SIGINT
+ *   2) send 中按 Ctrl-C    —— process.on('SIGINT') 全局拦截；空闲时仍是 "按两次退出"
+ *   任意一种触发后立即 convo.abort()，流式输出停止，抛出 LLMError('aborted')。
+ *   会话状态保留（之前的历史不丢失），可直接继续下一轮。
  */
 
 import readline from 'node:readline';
@@ -223,13 +230,54 @@ async function promptYesNo(question, defaultYes) {
 }
 
 let userWantsToQuit = false;
-rl.on('SIGINT', () => {
+let isSending = false;
+let sendAbortWatcher = null;
+let convo = null;
+
+function triggerAbort(reason) {
+  if (!isSending) return false;
+  convo.abort();
+  process.stdout.write(`\n${YELLOW}⏹  已发送 abort (${reason})${R}\n`);
+  return true;
+}
+
+/**
+ * 在 send 进行期间，把 stdin 临时接管监听单字符 'q' / Ctrl-C：
+ * - readline 在 prompt 之间处于 paused，不消费 'data' 事件，旁挂监听不会冲突
+ * - send 结束后清理，恢复 readline 主导
+ * - 用户在 send 中按 'q' 或 Ctrl-C 都会触发 convo.abort()
+ */
+function attachSendAbortWatcher() {
+  if (!process.stdin.isTTY) return;
+  const onData = (buf) => {
+    const ch = buf[0];
+    if (ch === 0x71 /* q */ || ch === 0x51 /* Q */ || ch === 0x03 /* Ctrl-C */) {
+      triggerAbort(ch === 0x03 ? 'Ctrl-C' : "按 'q'");
+    }
+  };
+  process.stdin.on('data', onData);
+  sendAbortWatcher = () => process.stdin.off('data', onData);
+}
+
+function detachSendAbortWatcher() {
+  if (sendAbortWatcher) {
+    sendAbortWatcher();
+    sendAbortWatcher = null;
+  }
+}
+
+/**
+ * 全局 SIGINT：用 process.on 而非 rl.on —— 后者只在 readline active 时触发，
+ * send 进行中 readline paused，rl.on('SIGINT') 不响应，会走 process 默认 handler 直接退出。
+ */
+process.on('SIGINT', () => {
+  if (triggerAbort('Ctrl-C')) return;
   if (userWantsToQuit) {
     console.log('\n再见 👋');
     rl.close();
     process.exit(0);
   } else {
-    console.log(`\n${YELLOW}提示：再次 Ctrl+C 退出，或输入 /exit${R}`);
+    console.log(`\n${YELLOW}提示：再次 Ctrl-C 退出，或输入 /exit；send 中按 q / Ctrl-C 改为打断模型${R}`);
     userWantsToQuit = true;
     prompt(`\n你 > `).then(handleUserInput);
   }
@@ -336,7 +384,7 @@ async function main() {
   console.log(`${DIM}  ↳ 模型列表通过 handle.listModels() 动态拉取，已缓存 5 分钟${R}`);
   divider();
 
-  const convo = conversation(handle, {
+  convo = conversation(handle, {
     model: selectedModel,
     thinking: { type: 'enabled' },
     tools: demoTools,
@@ -349,7 +397,8 @@ async function main() {
 请用中文回答。需要时主动调用工具。`,
   });
 
-  console.log(`\n${DIM}已就绪。命令: ${BOLD}/exit /reset /tools /info /stream /help${R}`);
+  console.log(`\n${DIM}已就绪。命令: ${BOLD}/exit /reset /tools /info /stream /abort /help${R}`);
+  console.log(`${DIM}       send 中按 q 或 Ctrl-C 即可打断模型输出${R}`);
 
   const ask = () => prompt(`\n${BOLD}你 >${R} `);
   await ask().then(handleUserInput);
@@ -393,6 +442,7 @@ async function main() {
       console.log(`  消息数:        ${convo.messages.length} (含 tool_use / tool_result)`);
       console.log(`  maxIterations: ${maxIterations}`);
       console.log(`  流式输出:      ${useStream ? `${GREEN}开启${R}` : `${DIM}关闭${R}`}`);
+      console.log(`  打断支持:      ${GREEN}开启${R}  ${DIM}(send 中按 q / Ctrl-C 或 /abort)${R}`);
       divider();
       await ask().then(handleUserInput);
       return;
@@ -404,6 +454,16 @@ async function main() {
       await ask().then(handleUserInput);
       return;
     }
+    if (input === '/abort') {
+      if (triggerAbort('/abort 命令')) {
+        divider();
+      } else {
+        console.log(`${DIM}(当前没有进行中的 send，无需 abort)${R}`);
+        divider();
+      }
+      await ask().then(handleUserInput);
+      return;
+    }
     if (input === '/help') {
       console.log(`\n${BOLD}命令:${R}
   ${CYAN}/exit${R}    退出
@@ -411,13 +471,19 @@ async function main() {
   ${CYAN}/tools${R}   列出工具
   ${CYAN}/info${R}    显示会话信息
   ${CYAN}/stream${R}  切换流式开关
-  ${CYAN}/help${R}    本帮助`);
+  ${CYAN}/abort${R}   打断当前 send (等价 send 中按 q / Ctrl-C)
+  ${CYAN}/help${R}    本帮助
+
+${DIM}打断快捷键:${R} send 中按 ${CYAN}q${R} 或 ${CYAN}Ctrl-C${R} 立即停止流式输出
+${DIM}退出快捷键:${R} 空闲时连按两次 ${CYAN}Ctrl-C${R} 或输入 /exit`);
       divider();
       await ask().then(handleUserInput);
       return;
     }
 
-    process.stdout.write(`\n${DIM}… 模型工作中${R}`);
+    process.stdout.write(`\n${DIM}… 模型工作中 (send 中按 q 或 Ctrl-C 打断)${R}`);
+    isSending = true;
+    attachSendAbortWatcher();
     try {
       const streamRenderer = createStreamRenderer();
       await convo.send(input, {
@@ -442,13 +508,19 @@ async function main() {
       divider();
     } catch (err) {
       process.stdout.write('\x1b[2K\r');
-      if (err instanceof LLMError) {
+      if (err instanceof LLMError && err.code === 'aborted') {
+        const reason = err.abortReason === 'timeout' ? '超时' : '用户取消';
+        console.log(`${YELLOW}⏹  已打断 (${reason})${R}`);
+      } else if (err instanceof LLMError) {
         console.error(`${RED}✗ ${err.code}${R}: ${err.message}`);
         if (err.status) console.error(`  ${DIM}status: ${err.status}${R}`);
       } else {
         console.error(`${RED}✗ ${err.message}${R}`);
       }
       divider();
+    } finally {
+      detachSendAbortWatcher();
+      isSending = false;
     }
 
     await ask().then(handleUserInput);

@@ -14,6 +14,7 @@
 - **并行工具执行** —— 单工具失败不影响其他，错误以 `isError: true` tool_result 写回由模型自行决定
 - **声明式 config 类型** —— 各 Provider 用 declaration merging 注册自己的 config 类型，`createProvider('minimax', { apiKey })` 自动校验
 - **可注入 fetch** —— 测试和代理场景友好
+- **打断模型输出** —— 全链路支持 `AbortSignal`：HTTP 请求、流式 SSE、工具调用都能中断；`conversation.abort()` 一键取消，错误归一化为 `LLMError('aborted')`
 
 ## Install
 
@@ -119,6 +120,7 @@ type Tool = {
 | `streamToResponse(stream, onEvent?)` | 把 SSE 流累积为 `ChatResponse` |
 | `runWithTools(handle, request)` | 一次性自动工具循环（并行 / 错误回写 / maxIterations / 流式） |
 | `conversation(handle, options).send(input, sendOpts)` | 有状态多轮，内部用 `runWithTools` 自动续上下文 |
+| `conversation.abort()` / `conversation.signal` | 主动打断当前 send / 监听 abort 信号 |
 | `doFetch` / `parseSSE` | 高级：自定义 Provider 时可复用 |
 
 完整类型见 `src/types.ts` 与 `src/registry.ts`。
@@ -170,6 +172,49 @@ const convo = conversation(handle, {
   tools: [/* ... */],
 });
 ```
+
+## Abort / Cancel
+
+整个调用链都支持标准的 `AbortSignal`，可由 `AbortController` 控制。打断后会抛出 `LLMError`，`code === 'aborted'`，可通过 `err.aborted === true` 或 `err.abortReason`（`'user'` / `'timeout'`）进一步判断。
+
+```ts
+// 方式一：传 signal —— 每次 send 都用同一个 controller
+const ctrl = new AbortController();
+const p = convo.send('写一篇长文', { signal: ctrl.signal });
+setTimeout(() => ctrl.abort(), 1000); // 1s 后打断
+try {
+  await p;
+} catch (err) {
+  if (err instanceof LLMError && err.code === 'aborted') {
+    console.log('用户取消了', err.abortReason);
+  }
+}
+
+// 方式二：直接调 conversation.abort() —— 无需自己持有 controller
+const p2 = convo.send('再写一篇');
+setTimeout(() => convo.abort(), 1000);
+try {
+  await p2;
+} catch (err) {
+  // err.code === 'aborted'
+}
+
+// chat / stream / listModels 也同样接受 signal
+await handle.chat({ ..., signal: ctrl.signal });
+await handle.stream({ ..., signal: ctrl.signal }).next(); // 流式也能打断
+await handle.listModels({ signal: ctrl.signal });
+
+// 工具调用也会被 signal 触发 abort —— ctx.signal 传入 ToolExecutor
+const tool = {
+  name: 'slow_op',
+  execute: async (_n, _i, ctx) => {
+    ctx.signal?.addEventListener('abort', () => cleanup());
+    await longRunning();
+  },
+};
+```
+
+abort 适用场景：用户在 UI 上按 Esc / Ctrl-C 打断、AI 出错立即停止长生成、超时控制、批量任务中取消某个仍在排队的请求。
 
 ## Adding a Provider
 
@@ -255,7 +300,7 @@ npx tsc                    # 先构建
 node test.js               # 选供应源 → 输 API Key → 动态拉模型 → 选模型 → 开聊
 ```
 
-支持命令：`/exit` `/reset` `/tools` `/info` `/stream` `/help`。
+支持命令：`/exit` `/reset` `/tools` `/info` `/stream` `/abort` `/help`。send 中按 Ctrl-C 即可打断模型输出。
 
 ## License
 

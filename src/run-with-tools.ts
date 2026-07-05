@@ -286,17 +286,36 @@ function stringifyOutput(output: unknown): string {
 
 /**
  * 一轮 model 调用：stream 模式走 streamToResponse 累积，非 stream 模式直接 chat。
+ *
+ * 防御性捕获任何残留的原始 DOMException（AbortError）并归一化为 LLMError('aborted')，
+ * 保证上层 runWithTools / conversation 只需捕获一种错误类型。
  */
 async function callOnce(
   handle: ProviderHandle,
   req: RunWithToolsRequest,
   baseArgs: Parameters<ProviderHandle['chat']>[0],
 ): Promise<ChatResponse> {
-  if (req.stream) {
-    const stream = handle.stream(baseArgs);
-    return streamToResponse(stream, req.onStreamEvent);
+  try {
+    if (req.stream) {
+      const stream = handle.stream(baseArgs);
+      return await streamToResponse(stream, req.onStreamEvent);
+    }
+    return await handle.chat(baseArgs);
+  } catch (err) {
+    if (
+      req.signal?.aborted &&
+      err instanceof DOMException &&
+      (err.name === 'AbortError' || err.name === 'TimeoutError')
+    ) {
+      throw new LLMError('aborted', 'Request aborted by signal', {
+        provider: handle.info.name,
+        cause: err,
+        aborted: true,
+        abortReason: err.name === 'TimeoutError' ? 'timeout' : 'user',
+      });
+    }
+    throw err;
   }
-  return handle.chat(baseArgs);
 }
 
 export async function runWithTools(

@@ -37,7 +37,7 @@ export async function* minimaxStream(
     throw new LLMError('network', 'Response has no body (stream)', { provider: 'MiniMax' });
   }
 
-  for await (const sse of parseSSE(response.body)) {
+  for await (const sse of parseSSE(response.body, request.signal)) {
     if (sse.data === '[DONE]') continue;
 
     let parsed: MiniMaxStreamEvent;

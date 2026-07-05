@@ -75,12 +75,13 @@ export async function doFetch(
   try {
     response = await fetchImpl(url, { ...init, signal });
   } catch (err) {
-    // 中断 / 网络 / 超时
-    if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+    if (isAbortError(err)) {
+      const reason: 'timeout' | 'user' =
+        err.name === 'TimeoutError' ? 'timeout' : 'user';
       throw new LLMErrorClass(
-        'network',
-        `Request aborted${err.name === 'TimeoutError' ? ' (timeout)' : ''}`,
-        { provider: options.provider, cause: err },
+        'aborted',
+        `Request aborted${reason === 'timeout' ? ' (timeout)' : ''}`,
+        { provider: options.provider, cause: err, aborted: true, abortReason: reason },
       );
     }
     throw new LLMErrorClass('network', `Network request failed: ${(err as Error).message}`, {
@@ -109,6 +110,10 @@ export async function doFetch(
   }
 
   return response;
+}
+
+function isAbortError(err: unknown): err is DOMException {
+  return err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError');
 }
 
 function mapStatusToCode(status: number): LLMError['code'] {
@@ -157,8 +162,12 @@ export type RawSSEEvent = {
  * - event: 单行
  * - : 开头的行视为注释（如 :ping）跳过
  * - 末尾 data: [DONE] 自动以 { data: '[DONE]' } 形式产出
+ * - 若提供 signal，每次 read 前检查；signal 触发 abort 时取消底层 reader 并抛 LLMError('aborted')
  */
-export async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterable<RawSSEEvent> {
+export async function* parseSSE(
+  stream: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): AsyncIterable<RawSSEEvent> {
   const decoder = new TextDecoder('utf-8');
   const reader = stream.getReader();
 
@@ -168,6 +177,17 @@ export async function* parseSSE(stream: ReadableStream<Uint8Array>): AsyncIterab
 
   try {
     while (true) {
+      if (signal?.aborted) {
+        try {
+          await reader.cancel();
+        } catch {
+          // 忽略 reader.cancel() 错误 —— 已经关闭的 reader 是正常的
+        }
+        throw new LLMErrorClass('aborted', 'Stream aborted by signal', {
+          aborted: true,
+          abortReason: 'user',
+        });
+      }
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });

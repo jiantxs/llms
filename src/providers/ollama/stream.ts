@@ -56,7 +56,7 @@ export async function* ollamaStream(
     };
   }
 
-  for await (const sse of parseSSE(response.body)) {
+  for await (const sse of parseSSE(response.body, request.signal)) {
     if (sse.data === '[DONE]') break;
 
     let chunk: OpenAIStreamChunk;

@@ -79,10 +79,23 @@ export interface Conversation {
   readonly options: Readonly<ConversationOptions>;
   readonly messages: readonly Message[];
 
+  /**
+   * 当前正在进行的 send 操作的 AbortSignal；空闲时为 undefined。
+   * 调用方可监听此 signal 以在 abort 触发时做 UI 更新等副作用。
+   */
+  readonly signal: AbortSignal | undefined;
+
   send(
     input: string | readonly ContentBlock[],
     opts?: ConversationSendOptions,
   ): Promise<Message>;
+
+  /**
+   * 主动取消当前正在进行的 send（fetch 流 + 工具调用一并中断）。
+   * 空闲时调用为 no-op。下一次 send 会创建新的 signal。
+   * 取消行为通过 `LLMError('aborted')` 抛回给 send 的调用方。
+   */
+  abort(): void;
 
   reset(): void;
 }
@@ -95,6 +108,7 @@ export function conversation(
 ): Conversation {
   const id = `conv_${Date.now().toString(36)}_${(++conversationCounter).toString(36)}`;
   let messages: Message[] = [];
+  let currentController: AbortController | undefined;
 
   function buildRunOpts(signal?: AbortSignal): Omit<RunWithToolsRequest, 'messages' | 'executeTool'> {
     return {
@@ -153,6 +167,12 @@ export function conversation(
     get messages() {
       return messages;
     },
+    get signal() {
+      return currentController?.signal;
+    },
+    abort() {
+      currentController?.abort();
+    },
 
     async send(input, opts) {
       const events = opts?.events;
@@ -166,33 +186,42 @@ export function conversation(
         { role: 'user', content: userContent },
       ];
 
-      const result = await runWithTools(handle, {
-        ...buildRunOpts(opts?.signal),
-        messages: initialMessages,
-        executeTool: async (name, input, ctx) => dispatchTool(name, input, ctx, events),
-        stream: opts?.stream === true,
-        onStreamEvent: events?.onStreamEvent,
-      });
+      const controller = new AbortController();
+      currentController = controller;
+      const combinedSignal =
+        opts?.signal !== undefined
+          ? AbortSignal.any([controller.signal, opts.signal])
+          : controller.signal;
+      try {
+        const result = await runWithTools(handle, {
+          ...buildRunOpts(combinedSignal),
+          messages: initialMessages,
+          executeTool: async (name, input, ctx) => dispatchTool(name, input, ctx, events),
+          stream: opts?.stream === true,
+          onStreamEvent: events?.onStreamEvent,
+        });
 
-      // 触发 onAssistantBlock —— 仅 thinking / text，跳过 tool_use（已被 onToolCall 涵盖）
-      const newMsgs = result.messages.slice(messages.length);
-      if (events?.onAssistantBlock) {
-        for (const m of newMsgs) {
-          if (m.role !== 'assistant') continue;
-          for (const b of m.content) {
-            if (b.type === 'thinking' || b.type === 'text') {
-              events.onAssistantBlock(b);
+        const newMsgs = result.messages.slice(messages.length);
+        if (events?.onAssistantBlock) {
+          for (const m of newMsgs) {
+            if (m.role !== 'assistant') continue;
+            for (const b of m.content) {
+              if (b.type === 'thinking' || b.type === 'text') {
+                events.onAssistantBlock(b);
+              }
             }
           }
         }
-      }
 
-      messages = [...result.messages];
-      const lastAssistant = findLastAssistant(messages);
-      if (!lastAssistant) {
-        throw new Error(`[conversation:${id}] No assistant message produced`);
+        messages = [...result.messages];
+        const lastAssistant = findLastAssistant(messages);
+        if (!lastAssistant) {
+          throw new Error(`[conversation:${id}] No assistant message produced`);
+        }
+        return lastAssistant;
+      } finally {
+        if (currentController === controller) currentController = undefined;
       }
-      return lastAssistant;
     },
 
     reset() {

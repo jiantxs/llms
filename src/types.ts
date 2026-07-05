@@ -213,7 +213,8 @@ export type LLMErrorCode =
   | 'invalid_request' // 400 / 参数错
   | 'tool_loop_exceeded' // runWithTools 超过 maxIterations
   | 'server' // 5xx
-  | 'network' // fetch 失败 / 中断
+  | 'network' // fetch 失败（非中断类）
+  | 'aborted' // 用户主动取消 / signal.abort() / 超时（AbortController 触发）
   | 'parse' // SSE / JSON 解析失败
   | 'unknown';
 
@@ -223,11 +224,22 @@ export class LLMError extends Error {
   readonly provider?: string;
   /** Provider 原始错误体（便于排查） */
   readonly raw?: unknown;
+  /** 是否由 AbortSignal 触发（用户取消 / 超时）。为 true 时 code === 'aborted'。 */
+  readonly aborted?: boolean;
+  /** 触发 abort 的原因（timeout / user / ...） */
+  readonly abortReason?: 'timeout' | 'user';
 
   constructor(
     code: LLMErrorCode,
     message: string,
-    options: { status?: number; provider?: string; raw?: unknown; cause?: unknown } = {},
+    options: {
+      status?: number;
+      provider?: string;
+      raw?: unknown;
+      cause?: unknown;
+      aborted?: boolean;
+      abortReason?: 'timeout' | 'user';
+    } = {},
   ) {
     super(message, options.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = 'LLMError';
@@ -235,5 +247,7 @@ export class LLMError extends Error {
     this.status = options.status;
     this.provider = options.provider;
     this.raw = options.raw;
+    this.aborted = options.aborted;
+    this.abortReason = options.abortReason;
   }
 }
