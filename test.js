@@ -148,20 +148,24 @@ function divider() {
 }
 
 function createStreamRenderer() {
-  const thinkingBuffers = new Map();
+  // Set 而非 Map：streaming 模式直接写出 thinking_delta，不在内存里攒字符串 —— 这正是
+  // 修"思考最后才显示"的根本修改。故意不画 ┌ │ └ 盒边框：思考内容会跨多行，边框会被中
+  // 间换行切断画不完整；盒边框仍由 onAssistantBlock 在非流模式下用 renderThinking 给出。
+  const openThinking = new Set();
   let textStarted = false;
   return {
     onStreamEvent(ev) {
       if (ev.type === 'content_block_delta') {
         if (ev.delta.type === 'thinking_delta') {
-          const prev = thinkingBuffers.get(ev.index) ?? '';
-          thinkingBuffers.set(ev.index, prev + ev.delta.thinking);
+          if (!openThinking.has(ev.index)) {
+            process.stdout.write(`\n${MAGENTA}💭 ${R}`);
+            openThinking.add(ev.index);
+          }
+          process.stdout.write(ev.delta.thinking);
         } else if (ev.delta.type === 'text_delta') {
-          if (thinkingBuffers.size > 0) {
-            for (const [idx, txt] of thinkingBuffers) {
-              if (txt) renderThinking(txt);
-              thinkingBuffers.set(idx, '');
-            }
+          if (openThinking.size > 0) {
+            process.stdout.write('\n');
+            openThinking.clear();
           }
           if (!textStarted) {
             process.stdout.write(`\n${CYAN}💬 ${R}`);
@@ -170,16 +174,14 @@ function createStreamRenderer() {
           process.stdout.write(ev.delta.text);
         }
       } else if (ev.type === 'content_block_stop') {
-        const buf = thinkingBuffers.get(ev.index);
-        if (typeof buf === 'string' && buf) {
-          renderThinking(buf);
-          thinkingBuffers.set(ev.index, '');
+        if (openThinking.delete(ev.index)) {
+          process.stdout.write('\n');
         }
       } else if (ev.type === 'message_stop') {
-        for (const [, txt] of thinkingBuffers) {
-          if (txt) renderThinking(txt);
+        if (openThinking.size > 0) {
+          process.stdout.write('\n');
+          openThinking.clear();
         }
-        thinkingBuffers.clear();
         if (textStarted) {
           process.stdout.write('\n');
           textStarted = false;
