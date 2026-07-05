@@ -259,13 +259,16 @@ async function main() {
   const selectedProvider = providers[providerIdx - 1];
 
   console.log(`\n${BOLD}[2] API Key${R} (${getProvider(selectedProvider.id)?.name ?? selectedProvider.id})`);
-  console.log(`  ${DIM}提示：可设置环境变量 ${selectedProvider.id.toUpperCase()}_API_KEY 后回车${R}`);
-  const apiKeyRaw = (await prompt(`API Key: `)).trim();
+  console.log(`  ${DIM}提示：可设置环境变量 ${selectedProvider.id.toUpperCase()}_API_KEY；留空则不发送 Authorization header${R}`);
+  const apiKeyRaw = (await prompt(`API Key (回车跳过): `)).trim();
   let apiKey = apiKeyRaw;
   if (!apiKey) {
     apiKey = process.env[`${selectedProvider.id.toUpperCase()}_API_KEY`] ?? '';
-    if (apiKey) console.log(`${GREEN}  ✓ 已从环境变量读取${R}`);
-    else { console.error(`${RED}  ✗ 不能为空${R}`); process.exit(1); }
+    if (apiKey) {
+      console.log(`${GREEN}  ✓ 已从环境变量读取${R}`);
+    } else {
+      console.log(`${YELLOW}  ! 留空 → 不发送 Authorization header（依赖服务端是否允许匿名）${R}`);
+    }
   }
 
   console.log(`\n${BOLD}[3] 创建 handle + 动态拉取模型列表${R}`);

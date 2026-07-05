@@ -11,6 +11,7 @@ import { doFetch, parseSSE } from '../base.js';
 import { LLMError, type ChatRequest, type StreamEvent } from '../../types.js';
 import type { ResolvedMiniMaxConfig } from './config.js';
 import { fromMiniMaxStreamEvent, toMiniMaxRequest, type MiniMaxStreamEvent } from './translate.js';
+import { buildHeaders } from './headers.js';
 
 const MESSAGES_PATH = '/v1/messages';
 
@@ -19,15 +20,11 @@ export async function* minimaxStream(
   request: ChatRequest,
 ): AsyncIterable<StreamEvent> {
   const body = { ...toMiniMaxRequest(request), stream: true };
+  const headers = { ...buildHeaders(config), accept: 'text/event-stream' };
 
   const response = await doFetch(`${config.baseUrl}${MESSAGES_PATH}`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': config.apiKey,
-      'anthropic-version': '2023-06-01',
-      accept: 'text/event-stream',
-    },
+    headers,
     body: JSON.stringify(body),
     signal: request.signal,
   }, {
@@ -41,7 +38,6 @@ export async function* minimaxStream(
   }
 
   for await (const sse of parseSSE(response.body)) {
-    // OpenAI 风格流式有时会用 [DONE] 哨兵 —— MiniMax / Anthropic 不发，但兼容处理
     if (sse.data === '[DONE]') continue;
 
     let parsed: MiniMaxStreamEvent;

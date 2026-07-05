@@ -139,6 +139,38 @@ const handle = createProvider('minimax', {
 
 支持的模型通过 `handle.listModels()` 动态获取（M3 / M2.7 / M2.5 / M2.1 / M2 全系列），端点 `GET /anthropic/v1/models`。
 
+### Ollama（OpenAI 兼容协议 · 本地）
+
+```ts
+const handle = createProvider('ollama', {
+  // 默认 http://localhost:11434/v1，无 apiKey 也可
+  // apiKey: 'your-ollama-key', // 如果启用了鉴权
+  // baseUrl: 'http://192.168.1.10:11434/v1', // 远程 Ollama
+});
+```
+
+**思考支持**：`features.thinking = true`。依赖 Ollama OpenAI 兼容端点新增的 `reasoning_effort` 字段（控制强度，映射为 `enabled → medium` / `disabled → none`），响应中通过 `message.reasoning` 与流式 `delta.reasoning` 拉取思维链。适用于 DeepSeek R1 / Qwen3 / GPT-OSS 等思考型模型；非思考型模型忽略该字段，原行为不变。模型列表通过 `GET /v1/models` 动态获取（返回本地已 `ollama pull` 的模型，例如 `deepseek-r1:latest`、`qwen3:latest`、`llama3:latest`）。
+
+使用示例：
+
+```bash
+# 先启动 Ollama
+ollama serve                       # 默认 :11434
+ollama pull deepseek-r1            # 拉一个思考型模型
+```
+
+```ts
+const handle = createProvider('ollama');
+const models = await handle.listModels();
+// → [{ id: 'deepseek-r1:latest' }, ...]
+
+const convo = conversation(handle, {
+  model: models[0].id,             // 'deepseek-r1:latest'
+  thinking: { type: 'enabled' },   // 开启思维链
+  tools: [/* ... */],
+});
+```
+
 ## Adding a Provider
 
 每个 Provider 是一个独立模块，导入时自注册。
@@ -192,11 +224,17 @@ src/
 └── providers/
     ├── base.ts                    # doFetch + parseSSE（共享 HTTP / SSE 工具）
     ├── index.ts                   # 副作用触发各 Provider 自注册
-    └── minimax/                   # MiniMax 实现（Anthropic 兼容协议）
-        ├── config.ts              # 配置 + baseUrl 默认值
-        ├── chat.ts                # POST /v1/messages
-        ├── stream.ts              # POST /v1/messages (stream) + SSE 解析
-        ├── translate.ts           # 协议翻译（请求 / 响应 / 流式事件）
+    ├── minimax/                   # MiniMax 实现（Anthropic 兼容协议）
+    │   ├── config.ts              # 配置 + baseUrl 默认值
+    │   ├── chat.ts                # POST /v1/messages
+    │   ├── stream.ts              # POST /v1/messages (stream) + SSE 解析
+    │   ├── translate.ts           # 协议翻译（请求 / 响应 / 流式事件）
+    │   └── index.ts               # Module 自注册 + listModels() 实现
+    └── ollama/                    # Ollama 实现（OpenAI 兼容协议 · 本地）
+        ├── config.ts              # 配置（默认 http://localhost:11434/v1）
+        ├── chat.ts                # POST /v1/chat/completions
+        ├── stream.ts              # POST /v1/chat/completions (stream) + OpenAI SSE
+        ├── translate.ts           # OpenAI Chat Completions 翻译
         └── index.ts               # Module 自注册 + listModels() 实现
 ```
 

@@ -12,6 +12,7 @@ import {
   resolveMiniMaxConfig,
   type MiniMaxConfig,
 } from './config.js';
+import { buildHeaders } from './headers.js';
 import { minimaxChat } from './chat.js';
 import { minimaxStream } from './stream.js';
 
@@ -35,10 +36,7 @@ const MiniMaxModule: ProviderModule = {
       `${config.baseUrl}${MINIMAX_MODELS_PATH}`,
       {
         method: 'GET',
-        headers: {
-          'x-api-key': config.apiKey,
-          'anthropic-version': '2023-06-01',
-        },
+        headers: buildHeaders(config),
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       },
       {

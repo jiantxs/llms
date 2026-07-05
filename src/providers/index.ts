@@ -6,3 +6,4 @@
  */
 
 import './minimax/index.js';
+import './ollama/index.js';
