@@ -25,6 +25,7 @@ import type {
   Tool,
   ToolChoice,
   ToolContext,
+  Usage,
 } from './types.js';
 
 export type ConversationOptions = {
@@ -80,6 +81,12 @@ export interface Conversation {
   readonly messages: readonly Message[];
 
   /**
+   * 累计 token 用量 —— 所有 send() 内每一轮 model 调用（含 tool loop 中间轮）的总和。
+   * reset() 后归零。
+   */
+  readonly usage: Usage;
+
+  /**
    * 当前正在进行的 send 操作的 AbortSignal；空闲时为 undefined。
    * 调用方可监听此 signal 以在 abort 触发时做 UI 更新等副作用。
    */
@@ -108,6 +115,7 @@ export function conversation(
 ): Conversation {
   const id = `conv_${Date.now().toString(36)}_${(++conversationCounter).toString(36)}`;
   let messages: Message[] = [];
+  let usage: Usage = { inputTokens: 0, outputTokens: 0 };
   let currentController: AbortController | undefined;
 
   function buildRunOpts(signal?: AbortSignal): Omit<RunWithToolsRequest, 'messages' | 'executeTool'> {
@@ -167,6 +175,9 @@ export function conversation(
     get messages() {
       return messages;
     },
+    get usage() {
+      return usage;
+    },
     get signal() {
       return currentController?.signal;
     },
@@ -214,6 +225,30 @@ export function conversation(
         }
 
         messages = [...result.messages];
+
+        let inTok = usage.inputTokens;
+        let outTok = usage.outputTokens;
+        let cacheRead = 0;
+        let cacheWrite = 0;
+        let hasCache = false;
+        for (const u of result.usages) {
+          inTok += u.inputTokens;
+          outTok += u.outputTokens;
+          if (u.cacheReadTokens !== undefined || u.cacheWriteTokens !== undefined) {
+            hasCache = true;
+            cacheRead += u.cacheReadTokens ?? 0;
+            cacheWrite += u.cacheWriteTokens ?? 0;
+          }
+        }
+        usage = hasCache
+          ? {
+              inputTokens: inTok,
+              outputTokens: outTok,
+              cacheReadTokens: cacheRead,
+              cacheWriteTokens: cacheWrite,
+            }
+          : { inputTokens: inTok, outputTokens: outTok };
+
         const lastAssistant = findLastAssistant(messages);
         if (!lastAssistant) {
           throw new Error(`[conversation:${id}] No assistant message produced`);
@@ -226,6 +261,7 @@ export function conversation(
 
     reset() {
       messages = [];
+      usage = { inputTokens: 0, outputTokens: 0 };
     },
   };
 }

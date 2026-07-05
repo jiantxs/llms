@@ -69,6 +69,7 @@ export type RunWithToolsResult = {
     readonly isError: boolean;
     readonly durationMs: number;
   }[];
+  readonly usages: readonly Usage[];
 };
 
 const DEFAULT_MAX_ITERATIONS = 10;
@@ -330,6 +331,7 @@ export async function runWithTools(
 
   let last: ChatResponse | undefined;
   let iter = 0;
+  const usages: Usage[] = [];
 
   for (iter = 0; iter < maxIter; iter++) {
     last = await callOnce(handle, req, {
@@ -344,6 +346,7 @@ export async function runWithTools(
       topP: req.topP,
       signal: req.signal,
     });
+    usages.push(last.usage);
 
     const toolUses = collectToolUses(last.message);
     if (toolUses.length === 0) {
@@ -379,6 +382,7 @@ export async function runWithTools(
     messages: trajectory,
     iterations: iter + 1,
     toolCalls,
+    usages,
   };
 }
 

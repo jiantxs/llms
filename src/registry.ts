@@ -13,6 +13,7 @@ import {
   type ModelInfo,
   type StreamEvent,
 } from './types.js';
+import { resolveContextLength, type ContextLengthTable } from './providers/context.js';
 
 // ---------------------------------------------------------------------------
 // 公共类型
@@ -60,6 +61,11 @@ export type ProviderHandle = {
   readonly stream: (request: ChatRequest) => AsyncIterable<StreamEvent>;
   /** 动态拉取模型列表。Provider 未实现时抛 LLMError(invalid_request)。 */
   readonly listModels: (opts?: ListModelsOptions) => Promise<readonly ModelInfo[]>;
+  /**
+   * 获取指定模型的最大上下文长度（token 数）。
+   * 优先级：config.maxContextLength > Provider contextTable > DEFAULT_CONTEXT_LENGTH (32000)。
+   */
+  readonly getContextLength: (modelId: string) => number;
 };
 
 /**
@@ -72,6 +78,8 @@ export type ProviderModule = ProviderInfo & {
     config: unknown,
     ctx: { readonly signal?: AbortSignal },
   ) => Promise<readonly ModelInfo[]>;
+  /** 可选：Provider 内置的模型上下文长度表。getContextLength() 查询时使用。 */
+  readonly contextTable?: ContextLengthTable;
 };
 
 /**
@@ -115,6 +123,7 @@ export function createProvider(id: string, config: unknown): ProviderHandle {
     );
   }
   const instance = mod.factory(config);
+  const maxContextLengthOverride = readMaxContextLengthOverride(config);
 
   // 模型列表缓存（每个 handle 一份，独立 TTL）
   let cache: { models: readonly ModelInfo[]; ts: number } | null = null;
@@ -142,7 +151,17 @@ export function createProvider(id: string, config: unknown): ProviderHandle {
       cache = { models, ts: now };
       return models;
     },
+    getContextLength(modelId: string): number {
+      return resolveContextLength(mod.contextTable, modelId, maxContextLengthOverride);
+    },
   };
+}
+
+function readMaxContextLengthOverride(config: unknown): number | undefined {
+  if (!config || typeof config !== 'object') return undefined;
+  const v = (config as Record<string, unknown>).maxContextLength;
+  if (typeof v === 'number') return v;
+  return undefined;
 }
 
 export function hasProvider(id: string): boolean {

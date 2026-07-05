@@ -37,6 +37,8 @@ export type ProviderConfigBase = {
   fetch?: ProviderFetch;
   /** 自定义超时（毫秒），0 表示不超时 */
   timeoutMs?: number;
+  /** 强制断言的最大上下文长度。设置后 getContextLength() 一律返回此值，忽略 Provider 模型表 */
+  maxContextLength?: number;
 };
 
 // ---------------------------------------------------------------------------

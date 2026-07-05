@@ -116,6 +116,7 @@ type Tool = {
 | `createProvider(id, config)` | 按 id 创建 handle（config 类型按 id 自动收窄） |
 | `hasProvider(id)` / `getProvider(id)` / `getProviderModels(id)` / `getProviderDefaultModel(id)` | 注册表同步访问器 |
 | `handle.listModels({ refresh?, signal? })` | 动态拉取模型列表（缓存 5 分钟） |
+| `handle.getContextLength(modelId)` | 获取指定模型的最大上下文长度（token 数），见 [Model Context Length](#model-context-length) |
 | `handle.chat(request)` / `handle.stream(request)` | 直接调模型（不走工具循环） |
 | `streamToResponse(stream, onEvent?)` | 把 SSE 流累积为 `ChatResponse` |
 | `runWithTools(handle, request)` | 一次性自动工具循环（并行 / 错误回写 / maxIterations / 流式） |
@@ -185,6 +186,7 @@ const convo = conversation(handle, {
 |---|---|---|
 | `baseUrl` | `string?` | 完整 base URL（含协议 + 主机 + 端口 + 路径），用于私有化部署或代理 |
 | `hostname` | `string?` | 简化写法 —— 只写主机名（可含端口），自动补协议 + Provider 默认 path |
+| `maxContextLength` | `number?` | 强制断言的最大上下文长度。设置后 `handle.getContextLength()` 一律返回此值，忽略 Provider 内置表（见 [Model Context Length](#model-context-length)） |
 
 ```ts
 // 三种等价写法（MiniMax）：
@@ -200,6 +202,43 @@ createProvider('minimax', { apiKey: 'xxx', hostname: 'http://api.example.com/cus
 **默认 path**：MiniMax 用 `/anthropic`、Ollama 用 `/v1`。`hostname` 不含 path 时用默认值；含 path 时保留用户给的。
 
 **hostname 非法**（如 `':::invalid:::'`）：解析时抛 `LLMError('invalid_request')`。
+
+## Model Context Length
+
+每个 Provider 内置一张静态表，把模型 id 映射到最大上下文长度。`handle.getContextLength(modelId)` 查询时按 `config.maxContextLength` → Provider 内置表 → `32000` 的优先级返回。
+
+### 内置表
+
+| Provider | 内容 | 来源 |
+|---|---|---|
+| `minimax` | M3 = 1,000,000；M2.7 / M2.5 / M2.1 / M2 = 204,800；M2-her = 65,536 | [官方文档](https://platform.minimaxi.com/docs/guides/text-generation) |
+| `ollama` | 空（OpenAI 兼容 `/v1/models` 端点不返回 context_length） | — |
+
+### 用法
+
+```ts
+const handle = createProvider('minimax', { apiKey: 'sk-xxx' });
+
+handle.getContextLength('MiniMax-M3');         // → 1_000_000（表命中）
+handle.getContextLength('MiniMax-M2-her');     // → 65_536
+handle.getContextLength('some-unknown-model'); // → 32_000（默认）
+```
+
+### 覆盖（override）
+
+`createProvider` 的 config 传入 `maxContextLength: number` 后，`handle.getContextLength()` 一律返回该值，忽略内置表。`<= 0` / `NaN` 视为未设置。
+
+```ts
+// Ollama 私有部署，模型实际窗口 8192
+const ollama = createProvider('ollama', { maxContextLength: 8192 });
+ollama.getContextLength('llama3'); // → 8192（无视内置空表）
+
+// 代理 / 自定义 Provider 也可手动断言
+const proxy = createProvider('minimax', { maxContextLength: 200_000 });
+proxy.getContextLength('MiniMax-M3'); // → 200_000（覆盖 M3 的 1M）
+```
+
+适用于：本地代理 / 私有部署 / 自定义 Provider / OpenAI 兼容协议不返回 context_length 的场景。
 
 ## Abort / Cancel
 

@@ -147,6 +147,17 @@ function divider() {
   console.log(`${DIM}${'─'.repeat(w)}${R}`);
 }
 
+function printContextStatus(convo, handle, modelId) {
+  const used = convo.usage.inputTokens + convo.usage.outputTokens;
+  const max = handle.getContextLength(modelId);
+  if (!Number.isFinite(max) || max <= 0) return;
+  const pct = (used / max) * 100;
+  const text = `ctx: ${used.toLocaleString()} / ${max.toLocaleString()} (${pct.toFixed(1)}%)`;
+  const w = process.stdout.columns || 80;
+  const pad = Math.max(0, w - text.length - 1);
+  console.log(`${DIM}${' '.repeat(pad)}${text}${R}`);
+}
+
 function createStreamRenderer() {
   // Set 而非 Map：streaming 模式直接写出 thinking_delta，不在内存里攒字符串 —— 这正是
   // 修"思考最后才显示"的根本修改。故意不画 ┌ │ └ 盒边框：思考内容会跨多行，边框会被中
@@ -445,6 +456,20 @@ async function main() {
       console.log(`  maxIterations: ${maxIterations}`);
       console.log(`  流式输出:      ${useStream ? `${GREEN}开启${R}` : `${DIM}关闭${R}`}`);
       console.log(`  打断支持:      ${GREEN}开启${R}  ${DIM}(send 中按 q / Ctrl-C 或 /abort)${R}`);
+
+      const u = convo.usage;
+      const cacheRead = u.cacheReadTokens ?? 0;
+      const cacheWrite = u.cacheWriteTokens ?? 0;
+      const total = u.inputTokens + u.outputTokens;
+      console.log(`  Token 用量:`);
+      console.log(`    输入:        ${CYAN}${u.inputTokens.toLocaleString()}${R}`);
+      console.log(`    输出:        ${CYAN}${u.outputTokens.toLocaleString()}${R}`);
+      if (cacheRead > 0 || cacheWrite > 0) {
+        console.log(`    缓存读:      ${DIM}${cacheRead.toLocaleString()}${R}`);
+        console.log(`    缓存写:      ${DIM}${cacheWrite.toLocaleString()}${R}`);
+      }
+      console.log(`    累计:        ${BOLD}${total.toLocaleString()}${R}  ${DIM}(输入 + 输出，cache 已含在输入内)${R}`);
+
       divider();
       await ask().then(handleUserInput);
       return;
@@ -524,6 +549,8 @@ ${DIM}退出快捷键:${R} 空闲时连按两次 ${CYAN}Ctrl-C${R} 或输入 /ex
       detachSendAbortWatcher();
       isSending = false;
     }
+
+    printContextStatus(convo, handle, selectedModel);
 
     await ask().then(handleUserInput);
   }

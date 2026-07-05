@@ -12,6 +12,7 @@ import {
   resolveMiniMaxConfig,
   type MiniMaxConfig,
 } from './config.js';
+import { MINIMAX_CONTEXT_LENGTHS } from './context.js';
 import { buildHeaders } from './headers.js';
 import { minimaxChat } from './chat.js';
 import { minimaxStream } from './stream.js';
@@ -29,6 +30,7 @@ const MiniMaxModule: ProviderModule = {
     multimodal: true,
   },
   dynamicModels: true,
+  contextTable: MINIMAX_CONTEXT_LENGTHS,
 
   async listModels(rawConfig, ctx) {
     const config = resolveMiniMaxConfig(rawConfig as MiniMaxConfig);

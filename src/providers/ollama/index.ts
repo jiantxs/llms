@@ -16,6 +16,7 @@ import {
   resolveOllamaConfig,
   type OllamaConfig,
 } from './config.js';
+import { OLLAMA_CONTEXT_LENGTHS } from './context.js';
 import { ollamaChat } from './chat.js';
 import { ollamaStream } from './stream.js';
 import { buildHeaders } from './chat.js';
@@ -34,6 +35,7 @@ const OllamaModule: ProviderModule = {
     multimodal: false,
   },
   dynamicModels: true,
+  contextTable: OLLAMA_CONTEXT_LENGTHS,
 
   async listModels(rawConfig, ctx) {
     const config = resolveOllamaConfig(rawConfig as OllamaConfig);
