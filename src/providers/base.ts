@@ -116,6 +116,38 @@ function isAbortError(err: unknown): err is DOMException {
   return err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError');
 }
 
+/**
+ * 把用户传入的 hostname 规范化为完整 base URL。
+ *
+ * 接受形式（按优先级）：
+ *   1. 已含协议（http:// / https://）—— 用 URL 解析；用户给的 path 优先，缺省 path 时用 defaultPath
+ *   2. 裸 host[:port]（如 'api.example.com:8080'）—— 补协议，path 用 defaultPath
+ *   3. URL 解析失败 —— 抛 LLMError('invalid_request')
+ *
+ * 返回的 URL 不带尾部斜杠。
+ */
+export function normalizeHostname(
+  protocol: 'http' | 'https',
+  hostname: string,
+  defaultPath: string,
+): string {
+  const trimmed = hostname.trim().replace(/\/+$/, '');
+  if (trimmed === '') {
+    throw new LLMErrorClass('invalid_request', 'hostname cannot be empty', {});
+  }
+  const withProto = /^https?:\/\//i.test(trimmed) ? trimmed : `${protocol}://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withProto);
+  } catch (err) {
+    throw new LLMErrorClass('invalid_request', `Invalid hostname: ${hostname}`, { cause: err });
+  }
+  if (url.pathname === '/' || url.pathname === '') {
+    url.pathname = defaultPath;
+  }
+  return url.toString().replace(/\/+$/, '');
+}
+
 function mapStatusToCode(status: number): LLMError['code'] {
   if (status === 401 || status === 403) return 'authentication';
   if (status === 429) return 'rate_limit';

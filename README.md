@@ -134,8 +134,10 @@ import { createProvider } from 'llms';
 
 const handle = createProvider('minimax', {
   apiKey: 'sk-cp-...',
-  // 可选：私有化部署或代理
+  // 可选：私有化部署或代理（二选一，baseUrl 优先）
   baseUrl: 'https://api.minimaxi.com/anthropic',
+  // hostname: 'api.minimaxi.com',                // 简写 —— 自动补 https:// + /anthropic
+  // hostname: 'api.example.com:8443',            // 含端口也 OK
 });
 ```
 
@@ -147,7 +149,9 @@ const handle = createProvider('minimax', {
 const handle = createProvider('ollama', {
   // 默认 http://localhost:11434/v1，无 apiKey 也可
   // apiKey: 'your-ollama-key', // 如果启用了鉴权
-  // baseUrl: 'http://192.168.1.10:11434/v1', // 远程 Ollama
+  // baseUrl: 'http://192.168.1.10:11434/v1',     // 远程 Ollama（与 hostname 二选一，baseUrl 优先）
+  // hostname: '192.168.1.10',                    // 简写 —— 自动补 http:// + /v1，默认端口 11434
+  // hostname: 'my-ollama.local:8080',            // 含端口
 });
 ```
 
@@ -172,6 +176,30 @@ const convo = conversation(handle, {
   tools: [/* ... */],
 });
 ```
+
+## Configuration
+
+每个 Provider 都接受一组 config 字段。除了通用的 `fetch` / `timeoutMs` 外，最常用的就是指定访问地址。两个等价方式：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `baseUrl` | `string?` | 完整 base URL（含协议 + 主机 + 端口 + 路径），用于私有化部署或代理 |
+| `hostname` | `string?` | 简化写法 —— 只写主机名（可含端口），自动补协议 + Provider 默认 path |
+
+```ts
+// 三种等价写法（MiniMax）：
+createProvider('minimax', { apiKey: 'xxx' });                              // → 默认 baseUrl
+createProvider('minimax', { apiKey: 'xxx', baseUrl: 'https://api.example.com/anthropic' });
+createProvider('minimax', { apiKey: 'xxx', hostname: 'api.example.com' });              // → https://api.example.com/anthropic
+createProvider('minimax', { apiKey: 'xxx', hostname: 'api.example.com:8443' });         // 含端口
+createProvider('minimax', { apiKey: 'xxx', hostname: 'http://api.example.com/custom' }); // 已含协议则保留用户给的 path
+```
+
+**优先级**：`baseUrl` > `hostname` > Provider 默认值。同时传两者时 `baseUrl` 生效（更具体的覆盖）。
+
+**默认 path**：MiniMax 用 `/anthropic`、Ollama 用 `/v1`。`hostname` 不含 path 时用默认值；含 path 时保留用户给的。
+
+**hostname 非法**（如 `':::invalid:::'`）：解析时抛 `LLMError('invalid_request')`。
 
 ## Abort / Cancel
 
